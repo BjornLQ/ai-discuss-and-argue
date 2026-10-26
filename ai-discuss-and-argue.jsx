@@ -191,7 +191,39 @@ const SHARED_CSS = `
 .frame-panel .sw button.on { background: #0e1627; color: #fff; box-shadow: none; }
 .generalnote { font-size: 11px; color: #9fb0d6; margin: 10px 0 0; }
 
-.between { text-align: center; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 14px 0 8px; }
+.between { text-align: center; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 18px 0 10px; }
+
+/* general settings panel */
+.genpanel { background:#fff; border:1px solid #dcdfe8; border-radius:14px; padding:14px 16px 16px; margin:0 0 12px; }
+.gentitle { font-size:12px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); margin:0 0 12px; }
+.gfield { margin-bottom:14px; }
+.gfield:last-child { margin-bottom:0; }
+.glabel { font-size:12.5px; font-weight:600; color:var(--ink); margin:0 0 6px; display:flex; align-items:center; gap:8px; }
+.glabel.sm { font-size:11.5px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.02em; margin-top:10px; }
+.req { font-size:10.5px; font-weight:600; color:var(--plum); text-transform:none; letter-spacing:0; }
+.opt { font-size:10.5px; font-weight:500; color:var(--muted); text-transform:none; letter-spacing:0; }
+.sw.seg { display:inline-flex; width:auto; }
+.sw.seg button { min-width:52px; padding:8px 14px; }
+.topic-input { width:100%; font-family:inherit; font-size:15px; border:1px solid transparent; border-radius:10px; padding:10px 12px; min-height:58px; resize:vertical; background:var(--field); color:var(--ink); }
+.topic-input:focus { outline:none; border-color:var(--blue); background:#fff; }
+.genrow { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.modsum { font-size:12.5px; color:var(--plum); }
+.modsum.ok { color:var(--green); }
+.btn.sm { padding:7px 14px; font-size:13px; }
+
+/* per-agent block extras */
+.card.block { flex-direction:row; }
+.readytag { font-size:11px; font-weight:600; }
+.readytag.ready { color:var(--green); }
+.readytag.local { color:var(--amber); }
+.readytag.nokey { color:var(--plum); }
+.openline { width:100%; font-family:inherit; font-size:14px; border:1px solid transparent; border-radius:10px; padding:9px 12px; min-height:44px; resize:vertical; background:var(--field); color:var(--ink); margin-bottom:4px; }
+.openline:focus { outline:none; border-color:var(--blue); background:#fff; }
+.behav-toggle { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; margin-top:12px; border:1px solid var(--hair); background:var(--field); border-radius:9px; padding:9px 12px; cursor:pointer; font-family:inherit; font-size:12.5px; font-weight:600; color:var(--ink); }
+.behav-toggle:hover { border-color:var(--blue); }
+.behav-note { font-size:11px; font-weight:600; color:var(--muted); }
+.behav-note.on { color:var(--amber); }
+.behav-body { padding:6px 2px 2px; }
 
 .card {
   background: #fff; border: 1px solid #dcdfe8; border-radius: 14px;
@@ -1637,6 +1669,7 @@ function Main({ keys, keysRef, keyReady, saveKey, forgetKey, drafts, setDrafts,
   const [recordVideo, setRecordVideo] = useState(true);
   const [music, setMusic] = useState(true);
   const [showConnect, setShowConnect] = useState(false);
+  const [openBehav, setOpenBehav] = useState({}); // which agent blocks have behaviour expanded
 
   const [phase, setPhase] = useState("setup"); // setup | running | done
   const [messages, setMessages] = useState([]);
@@ -1730,6 +1763,28 @@ function Main({ keys, keysRef, keyReady, saveKey, forgetKey, drafts, setDrafts,
       return prev.filter((_, j) => j !== i);
     });
 
+  // Set the number of agents directly (2–4): grow by adding fresh blocks,
+  // shrink by trimming from the end, keeping seeds in step.
+  const setCount = (n) => {
+    n = Math.max(2, Math.min(4, n));
+    setPeople((prev) => {
+      if (n === prev.length) return prev;
+      if (n < prev.length) {
+        setSeeds((s) => s.slice(0, n));
+        return prev.slice(0, n);
+      }
+      const add = [];
+      for (let i = prev.length; i < n; i++) add.push(blankParticipant(firstProv));
+      setSeeds((s) => { const ns = s.slice(); while (ns.length < n) ns.push(""); return ns; });
+      return [...prev, ...add];
+    });
+  };
+
+  // Whether an agent's chosen provider is ready to run.
+  // "ready" = cloud key saved; "local" = a local server (tried at run time);
+  // "nokey" = cloud provider with no key.
+  const providerState = (prov) => (isLocal(prov) ? "local" : keys[prov] ? "ready" : "nokey");
+
   const forget = async (i) => {
     await clearMind(nameOf(i));
     setMind(i, []);
@@ -1757,6 +1812,23 @@ function Main({ keys, keysRef, keyReady, saveKey, forgetKey, drafts, setDrafts,
   const arcLabel = ARC.text[arcEff]
     ? "Where it ends up: " + (ARC.options.find((o) => o[0] === arcEff) || [, ""])[1]
     : "";
+
+  // What's connected, for the general panel's one-line summary.
+  const cloudReady = PROVIDER_IDS.filter((id) => !isLocal(id) && keys[id]).map((id) => PROVIDERS[id].label);
+  const localSet = PROVIDER_IDS.filter((id) => isLocal(id) && baseUrls[id] != null).map((id) => PROVIDERS[id].label);
+  const modelsSummary =
+    [...cloudReady, ...localSet].length
+      ? [...cloudReady, ...localSet].join(", ") + " connected"
+      : "No model connected yet";
+
+  // Start-button gating, with a reason when blocked.
+  const agentNeedsKey = people.some((p) => !isLocal(p.provider) && !keys[p.provider]);
+  const canStart = !!topic.trim() && !agentNeedsKey;
+  const startLabel = !topic.trim()
+    ? "Add a subject to start"
+    : agentNeedsKey
+    ? "Connect a model to start"
+    : "Start the conversation";
 
   async function saveVideo(msgs) {
     const transcript = msgs && msgs.length ? msgs : messages;
@@ -1958,22 +2030,67 @@ function Main({ keys, keysRef, keyReady, saveKey, forgetKey, drafts, setDrafts,
       <div className="list" ref={listRef}>
         {phase === "setup" ? (
           <div className="setup">
-            <div className="setrow">
-              <div>
-                <h2>Set up the conversation</h2>
-                <p className="lead" style={{ margin: 0 }}>
-                  Choose how they relate, add 2–4 agents, and give them a subject.
-                </p>
+            {/* ── GENERAL SETTINGS (apply to everyone) ── */}
+            <div className="genpanel">
+              <div className="gentitle">Settings</div>
+
+              <div className="gfield">
+                <div className="glabel">Number of agents</div>
+                <div className="sw seg">
+                  {[2, 3, 4].map((n) => (
+                    <button key={n} className={count === n ? "on" : ""} onClick={() => setCount(n)}>
+                      {n}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <button className="link" onClick={() => setShowConnect(true)}>Connect models</button>
+
+              <div className="gfield">
+                <div className="glabel">Subject <span className="req">required</span></div>
+                <textarea
+                  className="topic-input"
+                  placeholder="[What should they talk about?]"
+                  value={topic}
+                  onChange={(e) => setTopic(e.target.value)}
+                  aria-label="Subject"
+                />
+              </div>
+
+              <div className="gfield">
+                <div className="glabel">Models</div>
+                <div className="genrow">
+                  <span className={"modsum" + (cloudReady.length || localSet.length ? " ok" : "")}>
+                    {modelsSummary}
+                  </span>
+                  <button className="btn quiet sm" onClick={() => setShowConnect(true)}>Connect models</button>
+                </div>
+              </div>
+
+              <div className="gfield">
+                <div className="glabel">Recording <span className="opt">optional</span></div>
+                <Toggle
+                  on={recordVideo}
+                  onChange={setRecordVideo}
+                  label="Record a video of the run"
+                  sub="Replays the conversation as a downloadable film when the minute ends."
+                />
+                {recordVideo && (
+                  <Toggle
+                    on={music}
+                    onChange={setMusic}
+                    label="Music and sound"
+                    sub="A faint continuous score with a soft ping as each line lands."
+                  />
+                )}
+              </div>
             </div>
 
-            {/* Overall / general frame — visually distinct from the agent cards */}
+            {/* ── HOW THEY RELATE (general, visually distinct) ── */}
             <div className="frame-panel">
-              <h2>How they relate · overall</h2>
+              <h2>How they relate · everyone</h2>
               <p className="lead">
-                The general tenor for everyone. It sets the starting point for every
-                agent's switches below; each agent can override any of them.
+                The general tenor. It sets the starting point for every agent's behaviour
+                switches; each agent can override its own.
               </p>
               <div className="frame-choices">
                 {FRAME_IDS.map((id) => (
@@ -1988,7 +2105,7 @@ function Main({ keys, keysRef, keyReady, saveKey, forgetKey, drafts, setDrafts,
                 ))}
               </div>
               <div className="frame-arc">
-                <div className="swlabel">{ARC.label} · overall</div>
+                <div className="swlabel">{ARC.label} · everyone</div>
                 <div className="sw">
                   <button className={"frame" + (arc === "frame" ? " on" : "")} onClick={() => setArc("frame")}>
                     Follow frame
@@ -2009,65 +2126,39 @@ function Main({ keys, keysRef, keyReady, saveKey, forgetKey, drafts, setDrafts,
               </div>
             </div>
 
-            <div className="infonote">
-              All writing and reasoning here comes from the training each selected AI had
-              before its release date. Nothing is looked up live.
-            </div>
-
-            <textarea
-              className="topic-input"
-              style={{ width: "100%", minHeight: 64, borderRadius: 12, marginBottom: 16 }}
-              placeholder="[What should they talk about?]"
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              aria-label="Subject"
-            />
-
-            <div className="between">The agents</div>
-
-            <div className="count-row">
-              <span>{count} agents</span>
-              {count < 4 && <button className="btn quiet" onClick={addPerson}>+ Add agent</button>}
-            </div>
+            {/* ── ONE BLOCK PER AGENT ── */}
+            <div className="between">{count} agents — one block each</div>
 
             {people.map((p, i) => {
               const ocount = overrideCount(p);
+              const pstate = providerState(p.provider);
+              const expanded = !!openBehav[i];
               return (
-                <div className="card" key={i} style={{ boxShadow: `inset 3px 0 0 ${seatColor(i)}` }}>
+                <div className="card block" key={i} style={{ boxShadow: `inset 3px 0 0 ${seatColor(i)}` }}>
                   <Avatar size={40} label={nameOf(i)} color={seatColor(i)} />
                   <div className="card-fields">
                     <div className="card-top">
                       <span className="ttl">Agent {i + 1}</span>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        {ocount > 0 && (
-                          <span className="ovr-count">
-                            {ocount} overriding the frame
-                          </span>
-                        )}
-                        {count > 2 && (
-                          <button
-                            className="remove-x"
-                            onClick={() => removePerson(i)}
-                            aria-label={"Remove agent " + (i + 1)}
-                            title="Remove this agent"
-                          >
-                            ×
-                          </button>
-                        )}
-                      </div>
+                      <span className={"readytag " + pstate}>
+                        {pstate === "ready" ? "✓ ready" : pstate === "local" ? "local — starts on run" : "needs a key"}
+                      </span>
                     </div>
+
+                    <div className="glabel sm">Name</div>
                     <input
                       placeholder="[Enter the agent's name here]"
                       value={p.name}
                       onChange={(e) => setPerson(i, { name: e.target.value })}
                     />
-                    <label>Who they are / their viewpoint (optional)</label>
+
+                    <div className="glabel sm">Who they are / viewpoint <span className="opt">optional</span></div>
                     <input
                       placeholder="[Who they are, what they want, what they are like]"
                       value={p.persona}
                       onChange={(e) => setPerson(i, { persona: e.target.value })}
                     />
-                    <div className="swlabel" style={{ marginTop: 6 }}>Model</div>
+
+                    <div className="glabel sm">Model</div>
                     <select
                       className="pick"
                       value={p.provider}
@@ -2102,62 +2193,49 @@ function Main({ keys, keysRef, keyReady, saveKey, forgetKey, drafts, setDrafts,
                       </div>
                     ) : null}
 
-                    {TRAITS.map((t) => (
-                      <TraitSwitch
-                        key={t.key}
-                        trait={t}
-                        value={p[t.key]}
-                        frame={frame}
-                        onChange={(v) => setPerson(i, { [t.key]: v })}
-                      />
-                    ))}
+                    <div className="glabel sm">Opening line <span className="opt">optional</span></div>
+                    <textarea
+                      className="openline"
+                      placeholder={`[${nameOf(i)}'s first line — or leave blank]`}
+                      value={seeds[i] || ""}
+                      onChange={(e) => {
+                        const next = seeds.slice();
+                        next[i] = e.target.value;
+                        setSeeds(next);
+                      }}
+                      aria-label={`Opening line for ${nameOf(i)}`}
+                    />
+
+                    {/* Behaviour — collapsed by default; defaults follow the frame */}
+                    <button
+                      className="behav-toggle"
+                      aria-expanded={expanded}
+                      onClick={() => setOpenBehav((o) => ({ ...o, [i]: !o[i] }))}
+                    >
+                      <span>{expanded ? "▾" : "▸"} Behaviour</span>
+                      <span className={"behav-note" + (ocount > 0 ? " on" : "")}>
+                        {ocount > 0 ? `${ocount} overriding the frame` : "optional · follows the frame"}
+                      </span>
+                    </button>
+                    {expanded && (
+                      <div className="behav-body">
+                        {TRAITS.map((t) => (
+                          <TraitSwitch
+                            key={t.key}
+                            trait={t}
+                            value={p[t.key]}
+                            frame={frame}
+                            onChange={(v) => setPerson(i, { [t.key]: v })}
+                          />
+                        ))}
+                      </div>
+                    )}
 
                     <Journal idx={i} label={nameOf(i)} notes={minds[i]} onForget={forget} />
                   </div>
                 </div>
               );
             })}
-
-            <div className="between">Optional opening lines</div>
-            <div className="openers">
-              <p className="lead" style={{ margin: "0 0 10px" }}>
-                Give any agent a first line to start from. Leave them all blank and the
-                agents open from the subject on their own.
-              </p>
-              {people.map((_, i) => (
-                <div className="seed-row" key={i}>
-                  <Avatar size={28} label={nameOf(i)} color={seatColor(i)} />
-                  <textarea
-                    placeholder={`[${nameOf(i)}'s opening line — optional]`}
-                    value={seeds[i] || ""}
-                    onChange={(e) => {
-                      const next = seeds.slice();
-                      next[i] = e.target.value;
-                      setSeeds(next);
-                    }}
-                    aria-label={`Opening line for ${nameOf(i)}`}
-                  />
-                </div>
-              ))}
-            </div>
-
-            <div className="between">The recording</div>
-            <div className="vidopts">
-              <Toggle
-                on={recordVideo}
-                onChange={setRecordVideo}
-                label="Record a video of the run"
-                sub="Replays the conversation as a downloadable film when the minute ends."
-              />
-              {recordVideo && (
-                <Toggle
-                  on={music}
-                  onChange={setMusic}
-                  label="Music and sound"
-                  sub="A faint continuous score with a soft ping as each line lands."
-                />
-              )}
-            </div>
 
             <div className="setrow" style={{ margin: "4px 0 0" }}>
               <button className="link" onClick={() => setShowPrompt(!showPrompt)}>
@@ -2262,8 +2340,8 @@ function Main({ keys, keysRef, keyReady, saveKey, forgetKey, drafts, setDrafts,
       <footer className="footer">
         {phase === "setup" && (
           <>
-            <button className="btn" onClick={start} disabled={!topic.trim()}>
-              Start the conversation
+            <button className="btn" onClick={start} disabled={!canStart}>
+              {startLabel}
             </button>
             <span className="hint">They talk for one minute.</span>
           </>
